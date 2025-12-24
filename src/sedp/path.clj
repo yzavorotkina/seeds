@@ -139,3 +139,15 @@
 
 (defn attr [node attr-name]
   (get-attr node attr-name))
+
+(defn one
+  "Возвращает первый узел, найденный по path (или nil, если ничего не найдено).
+   Это просто (first (query root path)), но читается намного понятнее."
+  [root path]
+  (first (query root path)))
+
+(defn one-text
+  "Частый кейс: взять первый найденный узел и извлечь его текст.
+   Эквивалентно: (get-text (one root path))"
+  [root path]
+  (get-text (one root path)))
