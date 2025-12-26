@@ -17,32 +17,33 @@
               (when (vector? n)
                 (let [[tag attrs content] (node-parts n)
                       elem-schema (get schema tag)]
+
+                  ;; проверка атрибутов required
                   (when elem-schema
-                    ;; атрибуты required
                     (doseq [[attr attr-schema] (:attrs elem-schema)]
                       (when (and (= true (:required attr-schema))
                                  (not (contains? attrs attr)))
                         (swap! errors conj [:missing-attr tag attr])))
 
-                    ;; дети min/max
+                    ;; проверка детей min/max
                     (let [content-elems (filter vector? content)
-                          child-counts (frequencies (map first content-elems))
-                          child-rules (:children elem-schema)]
-                      (doseq [[child-tag rules] child-rules]
+                          child-counts (frequencies (map first content-elems))]
+                      (doseq [[child-tag rules] (:children elem-schema)]
                         (let [cnt (get child-counts child-tag 0)
-                              mn  (:min rules 0)
+                              mn  (get rules :min 0)
                               mx  (:max rules)]
                           (when (< cnt mn)
                             (swap! errors conj [:too-few tag child-tag cnt mn]))
                           (when (and mx (> cnt mx))
-                            (swap! errors conj [:too-many tag child-tag cnt mx])))))))
+                            (swap! errors conj [:too-many tag child-tag cnt mx]))))))
 
-                ;; рекурсия по детям
-                (doseq [child (filter vector? content)]
-                  (v* child)))))]
-(v* node)
-@errors)) )
+                  ;; рекурсия по детям
+                  (doseq [child (filter vector? content)]
+                    (v* child)))))]
+      (v* node)
+      @errors)))
 
+;; ✅ ВОТ ЭТО НУЖНО main'у
 (def example-schema
   {:book {:attrs {:id {:required true}
                   :category {:required false}}

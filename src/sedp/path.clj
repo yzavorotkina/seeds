@@ -1,44 +1,65 @@
 (ns sedp.path
+  (:refer-clojure :exclude [descendants])
   (:require [clojure.string :as str]
             [clojure.zip :as zip]))
 
 ;; ========== БАЗОВЫЕ УТИЛИТЫ ==========
 
-(defn- tag= [node tag-name]
+(defn- tag=
+  "Проверяет, что узел является элементом с заданным тегом.
+   Поддерживает wildcard '*'."
+  [node tag-name]
   (and (vector? node)
        (or (= tag-name "*")
            (= (first node) (keyword tag-name)))))
 
-(defn- get-attrs [node]
+(defn- get-attrs
+  "Возвращает map атрибутов узла или nil, если атрибутов нет."
+  [node]
   (when (and (vector? node) (>= (count node) 2))
     (let [second-item (second node)]
       (when (map? second-item) second-item))))
 
-(defn- get-children [node]
+(defn- get-children
+  "Возвращает дочерние элементы и текст узла,
+   корректно обрабатывая наличие атрибутов."
+  [node]
   (when (vector? node)
     (if (map? (second node))
       (drop 2 node)
       (rest node))))
 
-(defn- get-attr [node attr-name]
+(defn- get-attr
+  "Возвращает значение атрибута attr-name у узла."
+  [node attr-name]
   (when-let [attrs (get-attrs node)]
     (get attrs (keyword attr-name))))
 
-(defn- vector-children [node]
+(defn- vector-children
+  "Возвращает только дочерние элементы (вектор-узлы), без текста."
+  [node]
   (filter vector? (get-children node)))
 
 ;; ========== ПАРСИНГ ПУТЕЙ ==========
 
 (def ^:private desc-token "**") ;; внутренний маркер для //
 
-(defn- parse-step [step]
-  ;; tag[@attr='value']  или просто tag  или *
+(defn- parse-step
+  "Разбирает один шаг XPath-подобного пути.
+   Поддерживает:
+   - tag
+   - tag[@attr='value']
+   - *"
+  [step]
   (if-let [[_ tag attr value]
            (re-find #"([^\[]+)\[@([^=]+)=['\"]?([^'\"]+)['\"]?\]" step)]
     {:tag tag :attr attr :value value}
     {:tag step}))
 
-(defn- match-step? [node step-info]
+(defn- match-step?
+  "Проверяет, соответствует ли узел шагу пути
+   (по тегу и, при наличии, по атрибуту)."
+  [node step-info]
   (let [{:keys [tag attr value]} step-info]
     (and (tag= node tag)
          (or (nil? attr)
@@ -50,14 +71,15 @@
   (rest (tree-seq vector? vector-children node)))
 
 (defn- parse-path
-  "Поддержка:
-   - обычный / для перехода к детям
-   - // для поиска на любой глубине (как XPath descendant-or-self, но мы берем потомков)
-   Пример: catalog//title"
+  "Разбирает XPath-подобный путь в последовательность шагов.
+   Поддержка:
+   - /
+   - //
+   - условия по атрибутам
+   Пример: catalog//book[@id='2']"
   [path]
   (let [p (-> path
               str/trim
-              ;; превращаем '//' в '/**/' чтобы split видел отдельный сегмент
               (str/replace #"//+" (str "/" desc-token "/")))
         parts (->> (str/split p #"/")
                    (remove str/blank?)
@@ -90,8 +112,6 @@
                                    (mapcat vector-children nodes))]
                   (filter #(match-step? % step) candidates)))]
         (let [first-step (first steps)]
-          ;; КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ:
-          ;; если первый шаг совпадает с корнем, считаем его обращением к самому root
           (if (and (= (:axis first-step) :child)
                    (match-step? root first-step))
             (reduce apply-step [root] (rest steps))
@@ -124,21 +144,7 @@
             (recur (zip/next (zip/replace loc (apply f node args))))
             (recur (zip/next loc))))))))
 
-(defn set-attr [root path attr value]
-  (update-nodes root path
-                (fn [node]
-                  (if-let [attrs (get-attrs node)]
-                    (assoc-in node [1 (keyword attr)] value)
-                    (let [[tag & content] node]
-                      (vec (concat [tag {(keyword attr) value}] content)))))))
-
 ;; ========== ДОПОЛНИТЕЛЬНЫЕ ФУНКЦИИ ==========
-
-(defn select [root & path-parts]
-  (query root (str/join "/" path-parts)))
-
-(defn attr [node attr-name]
-  (get-attr node attr-name))
 
 (defn one
   "Возвращает первый узел, найденный по path (или nil, если ничего не найдено).
@@ -151,3 +157,16 @@
    Эквивалентно: (get-text (one root path))"
   [root path]
   (get-text (one root path)))
+
+(defn set-attr
+  "Устанавливает (или добавляет) атрибут для всех узлов,
+   найденных по пути `path`. Возвращает новое дерево."
+  [root path attr value]
+  (update-nodes root path
+                (fn [node]
+                  (let [[tag & more] node
+                        [attrs content] (if (map? (first more))
+                                          [(first more) (rest more)]
+                                          [{} more])
+                        new-attrs (assoc attrs (keyword attr) value)]
+                    (vec (concat [tag new-attrs] content))))))

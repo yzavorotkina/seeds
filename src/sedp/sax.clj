@@ -1,13 +1,34 @@
-(ns sedp.sax)
+(ns sedp.sax
+  (:require [clojure.string :as str]))
 
+;; -----------------------------
+;; SAX-like API
+;; -----------------------------
 (defprotocol Handler
   (start-document [this])
   (end-document [this])
-  (start-element [this tag attrs])
+  (start-element [this tag attrs])  ;; attrs может быть nil или map
   (end-element [this tag])
   (characters [this text]))
 
-(defrecord SimpleHandler [result stack]
+;; -----------------------------
+;; helpers for HTML
+;; -----------------------------
+(defn- indent [n]
+  (apply str (repeat n "  "))) ; 2 пробела
+
+(defn- attrs->str [attrs]
+  (when (and attrs (seq attrs))
+    (->> attrs
+         (map (fn [[k v]] (str (name k) "=\"" v "\"")))
+         (str/join " "))))
+
+;; -----------------------------
+;; 1) DOM builder: собирает дерево из событий
+;;    Формат совпадает с вашим:
+;;    [:tag {:attrs...} children...] или [:tag children...]
+;; -----------------------------
+(defrecord DomBuilder [result stack]
   Handler
   (start-document [this]
     (assoc this :result nil :stack []))
@@ -16,14 +37,19 @@
     (:result this))
 
   (start-element [this tag attrs]
-    (update this :stack conj [(keyword tag) attrs]))
+    (let [tag   (if (keyword? tag) tag (keyword (str tag)))
+          attrs (when (and attrs (seq attrs)) attrs)
+          frame (cond-> [tag]
+                        attrs (conj attrs))]
+      (update this :stack conj frame)))
 
   (characters [this text]
-    (if (seq (:stack this))
-      (update-in this [:stack (dec (count (:stack this)))] conj text)
-      this))
+    (let [t (str text)]
+      (if (seq (:stack this))
+        (update-in this [:stack (dec (count (:stack this)))] conj t)
+        this)))
 
-  (end-element [this tag]
+  (end-element [this _tag]
     (let [stack (:stack this)
           current (peek stack)
           stack' (pop stack)]
@@ -33,23 +59,183 @@
           (assoc this :stack (conj (pop stack') updated-parent)))
         (assoc this :result current :stack [])))))
 
-(defn parse [s handler]
-  ;; ВАЖНО: это не настоящий streaming SAX — read-string читает всё целиком.
-  (let [data (read-string s)
+(defn make-dom-builder []
+  (->DomBuilder nil []))
+
+;; -----------------------------
+;; 2) HTML writer: делает красивый HTML прямо по событиям (без DOM)
+;;    - inline для элементов, где только текст (title/author/price)
+;;    - многострочно для элементов с вложенными тегами
+;; -----------------------------
+(defrecord HtmlWriter [^StringBuilder sb stack]
+  Handler
+  (start-document [this]
+    (assoc this :sb (StringBuilder.) :stack []))
+
+  (end-document [this]
+    (str (:sb this)))
+
+  (start-element [this tag attrs]
+    (let [tag   (name tag)
+          level (count (:stack this))
+          a     (attrs->str attrs)
+          sb    (:sb this)
+
+          ;; если есть родитель — помечаем, что у него есть дочерний элемент
+          ;; и гарантируем перенос строки после его открывающего тега
+          stack (if (seq (:stack this))
+                  (let [p (peek (:stack this))
+                        stack' (pop (:stack this))]
+                    (when-not (:newline-after-open? p)
+                      (.append sb "\n"))
+                    (conj stack' (assoc p :has-child? true :newline-after-open? true)))
+                  (:stack this))
+
+          open  (if (seq a)
+                  (str (indent level) "<" tag " " a ">")
+                  (str (indent level) "<" tag ">"))]
+      (.append sb open)
+      (assoc this :stack
+                  (conj stack {:tag tag
+                               :level level
+                               :text ""
+                               :has-child? false
+                               :newline-after-open? false}))))
+
+  (characters [this text]
+    (let [t (str text)]
+      (if (seq (:stack this))
+        (update this :stack
+                (fn [stk]
+                  (let [f (peek stk)]
+                    (conj (pop stk) (update f :text str t)))))
+        this)))
+
+  (end-element [this tag]
+    (let [tag   (name tag)
+          sb    (:sb this)
+          f     (peek (:stack this))
+          stack (pop (:stack this))
+          level (:level f)
+          txt   (str/trim (:text f))]
+
+      (if (:has-child? f)
+        ;; многострочный элемент (есть вложенные теги)
+        (do
+          (.append sb (str "\n" (indent level) "</" tag ">\n"))
+          (assoc this :stack stack))
+
+        ;; inline элемент (только текст или пусто)
+        (do
+          (when (seq txt)
+            (.append sb txt))
+          (.append sb (str "</" tag ">\n"))
+
+          ;; помечаем родителя как having-child (если есть)
+          (if (seq stack)
+            (let [p (peek stack)
+                  stack' (pop stack)]
+              (assoc this :stack (conj stack' (assoc p :has-child? true :newline-after-open? true))))
+            (assoc this :stack stack)))))))
+
+(defn make-html-writer []
+  (->HtmlWriter (StringBuilder.) []))
+
+;; -----------------------------
+;; 3) Validator: проверяет схему прямо по событиям (без DOM)
+;; Схема как в sedp.schema:
+;; { :tag {:attrs { :id {:required true} ...}
+;;         :children { :child-tag {:min 1 :max 2} ...}}}
+;; -----------------------------
+(defrecord Validator [schema errors stack]
+  Handler
+  (start-document [this]
+    (assoc this :errors [] :stack []))
+
+  (end-document [this]
+    (:errors this))
+
+  (start-element [this tag attrs]
+    (let [tag (if (keyword? tag) tag (keyword (str tag)))
+          elem-schema (get (:schema this) tag)
+
+          ;; required attrs
+          this (if elem-schema
+                 (reduce
+                   (fn [acc [a rule]]
+                     (if (and (= true (:required rule))
+                              (not (contains? (or attrs {}) a)))
+                       (update acc :errors conj [:missing-attr tag a])
+                       acc))
+                   this
+                   (:attrs elem-schema))
+                 this)
+
+          frame {:tag tag
+                 :elem-schema elem-schema
+                 :child-counts {}}]
+      (update this :stack conj frame)))
+
+  (characters [this _text]
+    this)
+
+  (end-element [this tag]
+    (let [tag (if (keyword? tag) tag (keyword (str tag)))
+          frame (peek (:stack this))
+          stack' (pop (:stack this))
+          elem-schema (:elem-schema frame)
+          child-counts (:child-counts frame)
+
+          ;; min/max children checks
+          this (if elem-schema
+                 (reduce
+                   (fn [acc [child-tag rules]]
+                     (let [cnt (get child-counts child-tag 0)
+                           mn  (get rules :min 0)
+                           mx  (:max rules)]
+                       (cond
+                         (< cnt mn) (update acc :errors conj [:too-few tag child-tag cnt mn])
+                         (and mx (> cnt mx)) (update acc :errors conj [:too-many tag child-tag cnt mx])
+                         :else acc)))
+                   this
+                   (:children elem-schema))
+                 this)
+
+          ;; pop current frame
+          this (assoc this :stack stack')]
+
+      ;; update parent's child count
+      (if (seq stack')
+        (update-in this [:stack (dec (count stack')) :child-counts tag] (fnil inc 0))
+        this))))
+
+(defn make-validator [schema]
+  (->Validator schema [] []))
+
+;; -----------------------------
+;; parse: обходит вход и шлёт события handler
+;; input может быть:
+;;  - строка (S-выражение), тогда read-string
+;;  - уже готовое дерево (вектор/строка)
+;; -----------------------------
+(defn parse [input handler]
+  (let [data (if (string? input) (read-string input) input)
         handler (start-document handler)]
-    (letfn [(process [node h]
-              (if (vector? node)
-                (let [[tag & rest] node
-                      attrs (when (map? (first rest)) (first rest))
-                      content (if (map? (first rest)) (rest rest) rest)
-                      h (start-element h tag (or attrs {}))
-                      h (reduce
-                          (fn [acc item]
-                            (if (vector? item)
-                              (process item acc)
-                              (characters acc (str item))))
-                          h
-                          content)]
-                  (end-element h tag))
-                h))]
-      (end-document (process data handler)))))
+    (letfn [(walk [node h]
+              (cond
+                (vector? node)
+                (let [[tag & more] node
+                      [attrs content] (if (map? (first more))
+                                        [(first more) (rest more)]
+                                        [nil more])
+                      h (start-element h tag attrs)
+                      h (reduce (fn [acc item] (walk item acc)) h content)
+                      h (end-element h tag)]
+                  h)
+
+                (string? node)
+                (characters h node)
+
+                :else
+                (characters h (str node))))]
+      (end-document (walk data handler)))))

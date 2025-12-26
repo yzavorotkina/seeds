@@ -24,30 +24,13 @@
   (apply str (repeat level "  "))) ; 2 пробела на уровень
 
 (defn- inline-text-node?
-  "Можно ли печатать этот узел в одну строку?
-   Да, если среди children нет вложенных вектор-узлов (элементов),
-   и есть только текст/примитивы."
   [children]
   (and (seq children)
        (not-any? vector? children)))
 
-(defn to-html
-  "Преобразует дерево в HTML-строку (без переносов строк)."
-  [node]
-  (cond
-    (string? node) node
-
-    (vector? node)
-    (let [[tag attrs children] (node-parts node)
-          attr-str (attrs->str attrs)
-          content (apply str (map to-html children))]
-      (if (seq attr-str)
-        (str "<" (name tag) " " attr-str ">" content "</" (name tag) ">")
-        (str "<" (name tag) ">" content "</" (name tag) ">")))
-
-    :else
-    (str node)))
-
+;; -----------------------------
+;; 2) Pretty HTML: переносы + отступы + inline для текста
+;; -----------------------------
 (defn to-html-pretty
   "Преобразует дерево в HTML-строку с переносами и отступами.
    Если узел вида [:title \"Text\"] — печатаем в одну строку:
@@ -68,6 +51,7 @@
                          (str "<" tag-name ">"))
            close-inline (str "</" tag-name ">")]
 
+       ;; inline: внутри только текст, без вложенных элементов
        (if (inline-text-node? children)
          (str (indent level)
               open-inline
@@ -75,7 +59,8 @@
               close-inline
               "\n")
 
-         (let [open (str (indent level) open-inline "\n")
+         ;; многострочный: внутри есть вложенные элементы
+         (let [open  (str (indent level) open-inline "\n")
                inner (apply str (map #(to-html-pretty % (inc level)) children))
                close (str (indent level) close-inline "\n")]
            (str open inner close))))
