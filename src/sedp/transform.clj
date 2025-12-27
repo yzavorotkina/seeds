@@ -1,9 +1,6 @@
 (ns sedp.transform
   (:require [clojure.string :as str]))
 
-;; -----------------------------
-;; helpers: разбор узла
-;; -----------------------------
 (defn- node-parts
   "Разбирает узел вида:
    [:tag {:a 1} child1 child2 ...]  или  [:tag child1 child2 ...]
@@ -28,9 +25,6 @@
   (and (seq children)
        (not-any? vector? children)))
 
-;; -----------------------------
-;; 2) Pretty HTML: переносы + отступы + inline для текста
-;; -----------------------------
 (defn to-html-pretty
   "Преобразует дерево в HTML-строку с переносами и отступами.
    Если узел вида [:title \"Text\"] — печатаем в одну строку:

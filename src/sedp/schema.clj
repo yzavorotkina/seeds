@@ -43,7 +43,6 @@
       (v* node)
       @errors)))
 
-;; ✅ ВОТ ЭТО НУЖНО main'у
 (def example-schema
   {:book {:attrs {:id {:required true}
                   :category {:required false}}

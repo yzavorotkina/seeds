@@ -31,7 +31,7 @@
     (println "   -" (path/one-text book "title")))
 
   ;; -----------------------------
-  ;; 2) Модификация (по ТЗ это тоже пункт 2)
+  ;; 2) Модификация
   ;; -----------------------------
   (println "\n3. Модификация: сделаем вторую книгу tech через set-attr и снова запросим:")
   (let [doc2 (path/set-attr example-doc "catalog/book[@id='2']" "category" "tech")]
