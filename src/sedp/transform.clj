@@ -1,16 +1,6 @@
 (ns sedp.transform
-  (:require [clojure.string :as str]))
-
-(defn- node-parts
-  "Разбирает узел вида:
-   [:tag {:a 1} child1 child2 ...]  или  [:tag child1 child2 ...]
-   Возвращает [tag attrs children]."
-  [node]
-  (let [[tag & more] node
-        [attrs children] (if (map? (first more))
-                           [(first more) (rest more)]
-                           [{} more])]
-    [tag attrs children]))
+  (:require [clojure.string :as str]
+            [sedp.node :as node]))
 
 (defn- attrs->str [attrs]
   (->> attrs
@@ -18,7 +8,7 @@
        (str/join " ")))
 
 (defn- indent [level]
-  (apply str (repeat level "  "))) ; 2 пробела на уровень
+  (apply str (repeat level "  "))) ; 2 пробела
 
 (defn- inline-text-node?
   [children]
@@ -29,15 +19,14 @@
   "Преобразует дерево в HTML-строку с переносами и отступами.
    Если узел вида [:title \"Text\"] — печатаем в одну строку:
    <title>Text</title>"
-  ([node]
-   (to-html-pretty node 0))
-  ([node level]
+  ([n] (to-html-pretty n 0))
+  ([n level]
    (cond
-     (string? node)
-     (str (indent level) node "\n")
+     (string? n)
+     (str (indent level) n "\n")
 
-     (vector? node)
-     (let [[tag attrs children] (node-parts node)
+     (vector? n)
+     (let [[tag attrs children] (node/node-parts n)
            attr-str (attrs->str attrs)
            tag-name (name tag)
            open-inline (if (seq attr-str)
@@ -45,19 +34,16 @@
                          (str "<" tag-name ">"))
            close-inline (str "</" tag-name ">")]
 
-       ;; inline: внутри только текст, без вложенных элементов
        (if (inline-text-node? children)
          (str (indent level)
               open-inline
               (apply str (map str children))
               close-inline
               "\n")
-
-         ;; многострочный: внутри есть вложенные элементы
          (let [open  (str (indent level) open-inline "\n")
                inner (apply str (map #(to-html-pretty % (inc level)) children))
                close (str (indent level) close-inline "\n")]
            (str open inner close))))
 
      :else
-     (str (indent level) (str node) "\n"))))
+     (str (indent level) (str n) "\n"))))

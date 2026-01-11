@@ -7,47 +7,65 @@
 
 (def example-doc
   [:catalog
-   [:book {:id "1" :category "tech"}
+   ;; book #1: attrs стоят после детей + attrs разбиты на 2 map
+   [:book
     [:title "Clojure Programming"]
+    {:id "1"}                 ;; attrs не вторым
     [:author "Alex"]
+    {:category "tech"}        ;; второй attrs-map
     [:price "45.99"]]
+
+   ;; book #2: канон форма
    [:book {:id "2" :category "fiction"}
     [:title "The Novel"]
     [:author "Maria"]
-    [:price "29.99"]]])
+    [:price "29.99"]]
+
+   ;; book #3: attrs стоят между детьми + category отдельной map
+   [:book
+    {:id "3"}
+    [:title "No Price Book"]
+    [:author "Nina"]
+    {:category "tech"}]])
 
 (defn -main [& _args]
-  (println "=== SEDP - S-Expression Data Processor ===\n")
+  (println "=== SEDP - S-Expression Data Processor ===")
+  (println "=== DEMO: attrs can be anywhere inside a node ===\n")
 
   ;; -----------------------------
   ;; 1) XPath-lite: базовый поиск
   ;; -----------------------------
-  (println "1. Все книги (query catalog/book):")
+  (println "1) Все книги (query catalog/book):")
   (doseq [book (path/query example-doc "catalog/book")]
     (println "   -" book))
 
-  (println "\n2. Технические книги (query catalog/book[@category='tech'] → title):")
+  (println "\n2) Поиск по атрибуту, даже если attrs НЕ вторым элементом:")
+  (println "   book[@id='1']/title ="
+           (path/one-text example-doc "catalog/book[@id='1']/title"))
+
+  (println "\n3) Технические книги (query catalog/book[@category='tech'] → title):")
   (doseq [book (path/query example-doc "catalog/book[@category='tech']")]
     (println "   -" (path/one-text book "title")))
 
   ;; -----------------------------
   ;; 2) Модификация
   ;; -----------------------------
-  (println "\n3. Модификация: сделаем вторую книгу tech через set-attr и снова запросим:")
+  (println "\n4) set-attr: сделаем вторую книгу tech и снова запросим category='tech':")
   (let [doc2 (path/set-attr example-doc "catalog/book[@id='2']" "category" "tech")]
     (doseq [book (path/query doc2 "catalog/book[@category='tech']")]
       (println "   -" (path/one-text book "title"))))
 
   ;; -----------------------------
-  ;; Доп: трансформация в HTML (DOM режим)
+  ;; 3) HTML (DOM режим)
   ;; -----------------------------
-  (println "\n4. HTML (DOM → to-html-pretty):")
-  (println (transform/to-html-pretty (path/one example-doc "catalog")))
+  (println "\n5) HTML (DOM → to-html-pretty) для book[@id='1'] (attrs НЕ вторым элементом):")
+  (println (transform/to-html-pretty
+             (path/one example-doc "catalog/book[@id='1']")))
 
   ;; -----------------------------
-  ;; 3) Schema validation (DOM режим)
+  ;; 4) Schema validation (DOM режим)
   ;; -----------------------------
-  (println "5. Валидация по схеме (DOM → schema/validate):")
+  (println "6) Валидация по схеме (DOM → schema/validate) на документе с 'плавающими' attrs:")
   (let [errs (schema/validate example-doc schema/example-schema)]
     (if (empty? errs)
       (println "   OK: ошибок нет\n")
@@ -56,13 +74,13 @@
           (println))))
 
   ;; -----------------------------
-  ;; Доп: SAX режим — трансформация и валидация прямо по событиям
+  ;; 5) SAX режим — трансформация и валидация прямо по событиям
   ;; -----------------------------
   (let [doc-str (pr-str example-doc)]
-    (println "6. SAX режим: трансформация в HTML по событиям:")
+    (println "7) SAX режим: трансформация в HTML по событиям (attrs НЕ вторым элементом):")
     (println (sax/parse doc-str (sax/make-html-writer)))
 
-    (println "7. SAX режим: валидация по схеме по событиям:")
+    (println "8) SAX режим: валидация по схеме по событиям на том же документе:")
     (let [errs2 (sax/parse doc-str (sax/make-validator schema/example-schema))]
       (if (empty? errs2)
         (println "   OK: ошибок нет\n")
@@ -70,7 +88,7 @@
             (doseq [e errs2] (println "   " e))
             (println))))
 
-    (println "8. SAX режим: сборка DOM из событий:")
+    (println "9) SAX режим: сборка DOM из событий (показываем канонический вид):")
     (let [dom (sax/parse doc-str (sax/make-dom-builder))]
       (println "   DOM из SAX:")
       (println "   " dom))))

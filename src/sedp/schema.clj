@@ -1,33 +1,27 @@
-(ns sedp.schema)
-
-(defn- node-parts [node]
-  (let [[tag & more] node
-        [attrs content] (if (map? (first more))
-                          [(first more) (rest more)]
-                          [{} more])]
-    [tag attrs content]))
+(ns sedp.schema
+  (:require [sedp.node :as node]))
 
 (defn validate
   "Возвращает список ошибок. Схема:
    { :tag {:attrs { :id {:required true} ... }
            :children { :child-tag {:min 1 :max 2} ... }}}"
-  [node schema]
+  [root schema]
   (let [errors (atom [])]
     (letfn [(v* [n]
               (when (vector? n)
-                (let [[tag attrs content] (node-parts n)
+                (let [[tag attrs children] (node/node-parts n)
                       elem-schema (get schema tag)]
 
-                  ;; проверка атрибутов required
+                  ;; required attrs
                   (when elem-schema
                     (doseq [[attr attr-schema] (:attrs elem-schema)]
                       (when (and (= true (:required attr-schema))
                                  (not (contains? attrs attr)))
                         (swap! errors conj [:missing-attr tag attr])))
 
-                    ;; проверка детей min/max
-                    (let [content-elems (filter vector? content)
-                          child-counts (frequencies (map first content-elems))]
+                    ;; children min/max
+                    (let [child-elems  (filter vector? children)
+                          child-counts (frequencies (map first child-elems))]
                       (doseq [[child-tag rules] (:children elem-schema)]
                         (let [cnt (get child-counts child-tag 0)
                               mn  (get rules :min 0)
@@ -37,10 +31,10 @@
                           (when (and mx (> cnt mx))
                             (swap! errors conj [:too-many tag child-tag cnt mx]))))))
 
-                  ;; рекурсия по детям
-                  (doseq [child (filter vector? content)]
+                  ;; recurse
+                  (doseq [child (filter vector? children)]
                     (v* child)))))]
-      (v* node)
+      (v* root)
       @errors)))
 
 (def example-schema
